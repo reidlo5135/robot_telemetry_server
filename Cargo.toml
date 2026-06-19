@@ -1,0 +1,20 @@
+[package]
+name = "robot_telemetry_server"
+version = "0.1.0"
+authors = ["rnc <reidlo4215@gmail.com>"]
+edition = "2024"
+
+[[bin]]
+name = "robot_telemetry_server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = {version = "1", features = ["backtrace"]}
+rclrs = "0.7.0"
+std_msgs = "*"
+nav_msgs = "*"
+
+backtrace = "=0.3.74"
+
+[package.metadata.ros]
+install_to_share = ["launch"]
