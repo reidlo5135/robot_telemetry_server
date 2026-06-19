@@ -1,13 +1,16 @@
 use anyhow::Result;
-use rclrs::{Context, CreateBasicExecutor, RclrsErrorFilter, SpinOptions};
+use rclrs::*;
 
-/// Creates a ROS 2 context and node, prints a hello message,
-/// then spins until shutdown.
+mod collectors;
+mod node;
+mod state;
+
 fn main() -> Result<()> {
     let context: Context = Context::default_from_env()?;
-    let mut executor = context.create_basic_executor();
-    let _node = executor.create_node("robot_telemetry_server_node")?;
-    println!("Hello from robot_telemetry_server package!");
+    let mut executor: Executor = context.create_basic_executor();
+    let _node: node::RobotTelemetryServerNode =
+        node::RobotTelemetryServerNode::new(&executor, "robot_telemetry_server")?;
+    println!("Robot Telemetry Server Node has started.");
     executor.spin(SpinOptions::default()).first_error()?;
     Ok(())
 }
