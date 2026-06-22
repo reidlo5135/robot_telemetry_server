@@ -17,6 +17,7 @@ sensor_msgs = "*"
 geometry_msgs = "*"
 tf2_msgs = "*"
 rcl_interfaces = "*"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 
 backtrace = "=0.3.74"

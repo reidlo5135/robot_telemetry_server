@@ -3,7 +3,8 @@ use rclrs::*;
 use std::sync::Arc;
 
 use crate::collectors::odom::extract_odom_metric;
-use crate::params::{TelemetryParams, configure_qos, log_subscription_config};
+use crate::db::writer::{EventLog, MetricSample, SqliteWriterHandle};
+use crate::rcl::params::{TelemetryParams, configure_qos, log_subscription_config};
 use crate::state::TelemetryState;
 
 pub struct RobotTelemetryServerNode {
@@ -13,6 +14,9 @@ pub struct RobotTelemetryServerNode {
     // Keep parameter handles alive; rclrs undeclares parameters when handles are dropped.
     #[allow(dead_code)]
     params: TelemetryParams,
+
+    #[allow(dead_code)]
+    db_writer: SqliteWriterHandle,
 
     #[allow(dead_code)]
     odom_subscription: WorkerSubscription<nav_msgs::msg::Odometry, TelemetryState>,
@@ -40,14 +44,25 @@ impl RobotTelemetryServerNode {
     pub fn new(executor: &Executor, name: &str) -> Result<Self> {
         let node: Arc<NodeState> = executor.create_node(name)?;
 
+        let params = TelemetryParams::declare(&node)?;
+        let db_config = params.db.config(&node);
+        rclrs::log_info!(
+            node.logger(),
+            "Writing telemetry database to '{}' (batch_size={}, flush_interval_ms={})",
+            db_config.path.display(),
+            db_config.batch_size,
+            db_config.flush_interval_ms
+        );
+        let db_writer = SqliteWriterHandle::spawn(db_config.path.clone())?;
+
         let worker: Arc<WorkerState<TelemetryState>> = node.create_worker(TelemetryState {
             node: Arc::clone(&node),
+            db_writer: db_writer.clone(),
         });
-
-        let params = TelemetryParams::declare(&node)?;
 
         let odom_config = params.odom.subscription_config(&node, "odom");
         log_subscription_config(&node, "odom", &odom_config);
+        let odom_topic_name = odom_config.topic.to_string();
         let mut odom_subscription_opts: SubscriptionOptions<'_> =
             SubscriptionOptions::new(odom_config.topic.as_ref());
         odom_subscription_opts.qos =
@@ -57,7 +72,7 @@ impl RobotTelemetryServerNode {
             SubscriptionState<nav_msgs::msg::Odometry, Arc<WorkerState<TelemetryState>>>,
         > = worker.create_subscription(
             odom_subscription_opts,
-            |state: &mut TelemetryState, msg: nav_msgs::msg::Odometry| {
+            move |state: &mut TelemetryState, msg: nav_msgs::msg::Odometry| {
                 let (linear_x, angular_z) = extract_odom_metric(&msg);
                 rclrs::log_debug!(
                     state.node.logger(),
@@ -65,6 +80,35 @@ impl RobotTelemetryServerNode {
                     linear_x,
                     angular_z
                 );
+
+                let timestamp_ns = i64::from(msg.header.stamp.sec) * 1_000_000_000
+                    + i64::from(msg.header.stamp.nanosec);
+                for sample in [
+                    MetricSample {
+                        timestamp_ns,
+                        source_topic: odom_topic_name.clone(),
+                        metric_name: "odom_linear_x".to_string(),
+                        metric_value: linear_x,
+                        unit: "m/s".to_string(),
+                        quality: "ok".to_string(),
+                    },
+                    MetricSample {
+                        timestamp_ns,
+                        source_topic: odom_topic_name.clone(),
+                        metric_name: "odom_angular_z".to_string(),
+                        metric_value: angular_z,
+                        unit: "rad/s".to_string(),
+                        quality: "ok".to_string(),
+                    },
+                ] {
+                    if let Err(error) = state.db_writer.write_metric(sample) {
+                        rclrs::log_warn!(
+                            state.node.logger(),
+                            "Failed to queue odom metric for sqlite writer: {}",
+                            error
+                        );
+                    }
+                }
             },
         )?;
 
@@ -176,6 +220,7 @@ impl RobotTelemetryServerNode {
 
         let rosout_config = params.rosout.subscription_config(&node, "rosout");
         log_subscription_config(&node, "rosout", &rosout_config);
+        let rosout_topic_name = rosout_config.topic.to_string();
         let mut rosout_subscription_opts: SubscriptionOptions<'_> =
             SubscriptionOptions::new(rosout_config.topic.as_ref());
         rosout_subscription_opts.qos = configure_qos(
@@ -189,19 +234,41 @@ impl RobotTelemetryServerNode {
             SubscriptionState<rcl_interfaces::msg::Log, Arc<WorkerState<TelemetryState>>>,
         > = worker.create_subscription(
             rosout_subscription_opts,
-            |state: &mut TelemetryState, msg: rcl_interfaces::msg::Log| {
+            move |state: &mut TelemetryState, msg: rcl_interfaces::msg::Log| {
                 rclrs::log_debug!(
                     state.node.logger(),
                     "Received /rosout message from {}: '{}'",
                     msg.name,
                     msg.msg
                 );
+
+                let timestamp_ns =
+                    i64::from(msg.stamp.sec) * 1_000_000_000 + i64::from(msg.stamp.nanosec);
+                let event = EventLog {
+                    timestamp_ns,
+                    source_topic: rosout_topic_name.clone(),
+                    logger_name: msg.name.clone(),
+                    severity: i64::from(msg.level),
+                    message: msg.msg.clone(),
+                    file: optional_string(msg.file.clone()),
+                    function_name: optional_string(msg.function.clone()),
+                    line: Some(i64::from(msg.line)),
+                };
+
+                if let Err(error) = state.db_writer.write_event(event) {
+                    rclrs::log_warn!(
+                        state.node.logger(),
+                        "Failed to queue rosout event for sqlite writer: {}",
+                        error
+                    );
+                }
             },
         )?;
 
         Ok(Self {
             node,
             params,
+            db_writer,
             odom_subscription,
             imu_subscription,
             scan_subscription,
@@ -211,4 +278,8 @@ impl RobotTelemetryServerNode {
             rosout_subscription,
         })
     }
+}
+
+fn optional_string(value: String) -> Option<String> {
+    if value.is_empty() { None } else { Some(value) }
 }

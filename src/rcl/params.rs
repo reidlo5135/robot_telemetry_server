@@ -1,6 +1,22 @@
 use anyhow::Result;
 use rclrs::{MandatoryParameter, Node, QoSProfile};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
+
+const DEFAULT_DB_PATH: &str = "/tmp/robot_telemetry_server.db";
+const DEFAULT_DB_BATCH_SIZE: u32 = 100;
+const DEFAULT_DB_FLUSH_INTERVAL_MS: u64 = 1000;
+
+pub(crate) struct DbParameters {
+    path: MandatoryParameter<Arc<str>>,
+    batch_size: MandatoryParameter<i64>,
+    flush_interval_ms: MandatoryParameter<i64>,
+}
+
+pub(crate) struct DbConfig {
+    pub(crate) path: PathBuf,
+    pub(crate) batch_size: u32,
+    pub(crate) flush_interval_ms: u64,
+}
 
 struct TopicDefaults {
     topic: &'static str,
@@ -35,6 +51,7 @@ pub(crate) struct SubscriptionConfig {
 }
 
 pub(crate) struct TelemetryParams {
+    pub(crate) db: DbParameters,
     pub(crate) odom: TopicParameters,
     pub(crate) imu: TopicParameters,
     pub(crate) scan: TopicParameters,
@@ -60,6 +77,55 @@ impl TopicDefaults {
             reliability,
             depth,
             durability,
+        }
+    }
+}
+
+impl DbParameters {
+    fn declare(node: &Node) -> Result<Self> {
+        Ok(Self {
+            path: node
+                .declare_parameter("db.path")
+                .default(Arc::<str>::from(DEFAULT_DB_PATH))
+                .mandatory()?,
+            batch_size: node
+                .declare_parameter("db.batch_size")
+                .default(i64::from(DEFAULT_DB_BATCH_SIZE))
+                .mandatory()?,
+            flush_interval_ms: node
+                .declare_parameter("db.flush_interval_ms")
+                .default(i64::try_from(DEFAULT_DB_FLUSH_INTERVAL_MS).unwrap())
+                .mandatory()?,
+        })
+    }
+
+    pub(crate) fn config(&self, node: &Node) -> DbConfig {
+        let path = self.path.get();
+        let path = if path.is_empty() {
+            rclrs::log_warn!(
+                node.logger(),
+                "Invalid db.path '', defaulting to '{}'",
+                DEFAULT_DB_PATH
+            );
+            PathBuf::from(DEFAULT_DB_PATH)
+        } else {
+            PathBuf::from(path.as_ref())
+        };
+
+        DbConfig {
+            path,
+            batch_size: u32_parameter_or_default(
+                node,
+                "db.batch_size",
+                self.batch_size.get(),
+                DEFAULT_DB_BATCH_SIZE,
+            ),
+            flush_interval_ms: u64_parameter_or_default(
+                node,
+                "db.flush_interval_ms",
+                self.flush_interval_ms.get(),
+                DEFAULT_DB_FLUSH_INTERVAL_MS,
+            ),
         }
     }
 }
@@ -127,6 +193,7 @@ impl TopicParameters {
 impl TelemetryParams {
     pub(crate) fn declare(node: &Node) -> Result<Self> {
         Ok(Self {
+            db: DbParameters::declare(node)?,
             odom: TopicParameters::declare(
                 node,
                 "odom",
@@ -170,6 +237,38 @@ impl TelemetryParams {
                 TopicDefaults::new("/rosout", "", "", "reliable", 1000, "transient_local"),
             )?,
         })
+    }
+}
+
+fn u32_parameter_or_default(node: &Node, name: &str, value: i64, default: u32) -> u32 {
+    match u32::try_from(value) {
+        Ok(value) => value,
+        Err(_) => {
+            rclrs::log_warn!(
+                node.logger(),
+                "Invalid {} '{}', defaulting to {}",
+                name,
+                value,
+                default
+            );
+            default
+        }
+    }
+}
+
+fn u64_parameter_or_default(node: &Node, name: &str, value: i64, default: u64) -> u64 {
+    match u64::try_from(value) {
+        Ok(value) => value,
+        Err(_) => {
+            rclrs::log_warn!(
+                node.logger(),
+                "Invalid {} '{}', defaulting to {}",
+                name,
+                value,
+                default
+            );
+            default
+        }
     }
 }
 

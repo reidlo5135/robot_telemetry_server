@@ -1,5 +1,9 @@
 robot_telemetry_server:
   ros__parameters:
+    db:
+      path: "/home/rnc/ws/data/db/telemetry.db"
+      batch_size: 100
+      flush_interval_ms: 1000
     odom:
       topic: "/odom"
       frame_id: "odom"
