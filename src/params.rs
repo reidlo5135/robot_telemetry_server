@@ -41,6 +41,7 @@ pub(crate) struct TelemetryParams {
     pub(crate) twist: TopicParameters,
     pub(crate) battery: TopicParameters,
     pub(crate) tf: TopicParameters,
+    pub(crate) rosout: TopicParameters,
 }
 
 impl TopicDefaults {
@@ -162,6 +163,11 @@ impl TelemetryParams {
                 node,
                 "tf",
                 TopicDefaults::new("/tf", "", "", "reliable", 100, "volatile"),
+            )?,
+            rosout: TopicParameters::declare(
+                node,
+                "rosout",
+                TopicDefaults::new("/rosout", "", "", "reliable", 1000, "transient_local"),
             )?,
         })
     }

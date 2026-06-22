@@ -48,3 +48,11 @@ robot_telemetry_server:
         reliability: "reliable"
         depth: 100
         durability: "volatile"
+    rosout:
+      topic: "/rosout"
+      frame_id: ""
+      child_frame_id: ""
+      qos:
+        reliability: "reliable"
+        depth: 1000
+        durability: "transient_local"

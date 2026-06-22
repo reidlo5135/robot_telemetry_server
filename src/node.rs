@@ -31,6 +31,9 @@ pub struct RobotTelemetryServerNode {
 
     #[allow(dead_code)]
     tf_subscription: WorkerSubscription<tf2_msgs::msg::TFMessage, TelemetryState>,
+
+    #[allow(dead_code)]
+    rosout_subscription: WorkerSubscription<rcl_interfaces::msg::Log, TelemetryState>,
 }
 
 impl RobotTelemetryServerNode {
@@ -171,6 +174,31 @@ impl RobotTelemetryServerNode {
             },
         )?;
 
+        let rosout_config = params.rosout.subscription_config(&node, "rosout");
+        log_subscription_config(&node, "rosout", &rosout_config);
+        let mut rosout_subscription_opts: SubscriptionOptions<'_> =
+            SubscriptionOptions::new(rosout_config.topic.as_ref());
+        rosout_subscription_opts.qos = configure_qos(
+            &node,
+            "rosout",
+            rosout_subscription_opts.qos,
+            &rosout_config,
+        );
+
+        let rosout_subscription: Arc<
+            SubscriptionState<rcl_interfaces::msg::Log, Arc<WorkerState<TelemetryState>>>,
+        > = worker.create_subscription(
+            rosout_subscription_opts,
+            |state: &mut TelemetryState, msg: rcl_interfaces::msg::Log| {
+                rclrs::log_debug!(
+                    state.node.logger(),
+                    "Received /rosout message from {}: '{}'",
+                    msg.name,
+                    msg.msg
+                );
+            },
+        )?;
+
         Ok(Self {
             node,
             params,
@@ -180,6 +208,7 @@ impl RobotTelemetryServerNode {
             twist_subscription,
             battery_state_subscription,
             tf_subscription,
+            rosout_subscription,
         })
     }
 }

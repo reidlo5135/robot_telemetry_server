@@ -16,6 +16,7 @@ nav_msgs = "*"
 sensor_msgs = "*"
 geometry_msgs = "*"
 tf2_msgs = "*"
+rcl_interfaces = "*"
 
 
 backtrace = "=0.3.74"
