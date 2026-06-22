@@ -14,8 +14,11 @@ rclrs = "0.7.0"
 std_msgs = "*"
 nav_msgs = "*"
 sensor_msgs = "*"
+geometry_msgs = "*"
+tf2_msgs = "*"
+
 
 backtrace = "=0.3.74"
 
 [package.metadata.ros]
-install_to_share = ["launch"]
+install_to_share = ["launch", "config"]

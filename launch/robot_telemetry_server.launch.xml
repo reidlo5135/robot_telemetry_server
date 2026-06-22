@@ -1,0 +1,4 @@
+<launch>
+    <node pkg="robot_telemetry_server" type="robot_telemetry_server_node" name="robot_telemetry_server_node" output="screen">
+    </node>
+</launch>
