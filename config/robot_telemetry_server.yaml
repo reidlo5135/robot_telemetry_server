@@ -1,0 +1,50 @@
+robot_telemetry_server:
+  ros__parameters:
+    odom:
+      topic: "/odom"
+      frame_id: "odom"
+      child_frame_id: "base_footprint"
+      qos:
+        reliability: "reliable"
+        depth: 10
+        durability: "volatile"
+    imu:
+      topic: "/imu"
+      frame_id: "imu_link"
+      child_frame_id: ""
+      qos:
+        reliability: "reliable"
+        depth: 10
+        durability: "volatile"
+    scan:
+      topic: "/scan"
+      frame_id: "base_scan"
+      child_frame_id: ""
+      qos:
+        reliability: "best_effort"
+        depth: 5
+        durability: "volatile"
+    twist:
+      topic: "/cmd_vel"
+      frame_id: ""
+      child_frame_id: ""
+      qos:
+        reliability: "reliable"
+        depth: 10
+        durability: "volatile"
+    battery:
+      topic: "/battery_state"
+      frame_id: ""
+      child_frame_id: ""
+      qos:
+        reliability: "reliable"
+        depth: 10
+        durability: "volatile"
+    tf:
+      topic: "/tf"
+      frame_id: ""
+      child_frame_id: ""
+      qos:
+        reliability: "reliable"
+        depth: 100
+        durability: "volatile"

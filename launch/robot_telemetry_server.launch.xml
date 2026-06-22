@@ -1,4 +1,5 @@
 <launch>
-    <node pkg="robot_telemetry_server" type="robot_telemetry_server_node" name="robot_telemetry_server_node" output="screen">
+    <node pkg="robot_telemetry_server" exec="robot_telemetry_server" name="robot_telemetry_server" output="screen">
+        <param from="$(find-pkg-share robot_telemetry_server)/config/robot_telemetry_server.yaml"/>
     </node>
 </launch>
