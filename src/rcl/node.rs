@@ -2,8 +2,15 @@ use anyhow::Result;
 use rclrs::*;
 use std::sync::Arc;
 
-use crate::collectors::odom::extract_odom_metric;
-use crate::db::writer::{EventLog, MetricSample, SqliteWriterHandle};
+use crate::collectors::battery::extract_battery_metrics;
+use crate::collectors::common::current_timestamp_ns;
+use crate::collectors::imu::extract_imu_metrics;
+use crate::collectors::odom::extract_odom_metrics;
+use crate::collectors::rosout::{extract_rosout_event, extract_rosout_metrics};
+use crate::collectors::scan::extract_scan_metrics;
+use crate::collectors::tf::extract_tf_metrics;
+use crate::collectors::twist::extract_twist_metrics;
+use crate::db::writer::{MetricSample, SqliteWriterHandle};
 use crate::rcl::params::{TelemetryParams, configure_qos, log_subscription_config};
 use crate::state::TelemetryState;
 
@@ -73,42 +80,18 @@ impl RobotTelemetryServerNode {
         > = worker.create_subscription(
             odom_subscription_opts,
             move |state: &mut TelemetryState, msg: nav_msgs::msg::Odometry| {
-                let (linear_x, angular_z) = extract_odom_metric(&msg);
                 rclrs::log_debug!(
                     state.node.logger(),
                     "Received /odom message linear.x={:.3}, angular.z={:.3}",
-                    linear_x,
-                    angular_z
+                    msg.twist.twist.linear.x,
+                    msg.twist.twist.angular.z
                 );
 
-                let timestamp_ns = i64::from(msg.header.stamp.sec) * 1_000_000_000
-                    + i64::from(msg.header.stamp.nanosec);
-                for sample in [
-                    MetricSample {
-                        timestamp_ns,
-                        source_topic: odom_topic_name.clone(),
-                        metric_name: "odom_linear_x".to_string(),
-                        metric_value: linear_x,
-                        unit: "m/s".to_string(),
-                        quality: "ok".to_string(),
-                    },
-                    MetricSample {
-                        timestamp_ns,
-                        source_topic: odom_topic_name.clone(),
-                        metric_name: "odom_angular_z".to_string(),
-                        metric_value: angular_z,
-                        unit: "rad/s".to_string(),
-                        quality: "ok".to_string(),
-                    },
-                ] {
-                    if let Err(error) = state.db_writer.write_metric(sample) {
-                        rclrs::log_warn!(
-                            state.node.logger(),
-                            "Failed to queue odom metric for sqlite writer: {}",
-                            error
-                        );
-                    }
-                }
+                queue_metrics(
+                    state,
+                    "odom",
+                    extract_odom_metrics(&msg, odom_topic_name.as_str()),
+                );
             },
         )?;
 
@@ -118,17 +101,24 @@ impl RobotTelemetryServerNode {
             SubscriptionOptions::new(imu_config.topic.as_ref());
         imu_subscription_opts.qos =
             configure_qos(&node, "imu", imu_subscription_opts.qos, &imu_config);
+        let imu_topic_name = imu_config.topic.to_string();
 
         let imu_subscription: Arc<
             SubscriptionState<sensor_msgs::msg::Imu, Arc<WorkerState<TelemetryState>>>,
         > = worker.create_subscription(
             imu_subscription_opts,
-            |state: &mut TelemetryState, msg: sensor_msgs::msg::Imu| {
+            move |state: &mut TelemetryState, msg: sensor_msgs::msg::Imu| {
                 rclrs::log_debug!(
                     state.node.logger(),
                     "Received /imu message linear_acceleration.x={:.3}, angular_velocity.z={:.3}",
                     msg.linear_acceleration.x,
                     msg.angular_velocity.z
+                );
+
+                queue_metrics(
+                    state,
+                    "imu",
+                    extract_imu_metrics(&msg, imu_topic_name.as_str()),
                 );
             },
         )?;
@@ -139,16 +129,23 @@ impl RobotTelemetryServerNode {
             SubscriptionOptions::new(scan_config.topic.as_ref());
         scan_subscription_opts.qos =
             configure_qos(&node, "scan", scan_subscription_opts.qos, &scan_config);
+        let scan_topic_name = scan_config.topic.to_string();
 
         let scan_subscription: Arc<
             SubscriptionState<sensor_msgs::msg::LaserScan, Arc<WorkerState<TelemetryState>>>,
         > = worker.create_subscription(
             scan_subscription_opts,
-            |state: &mut TelemetryState, msg: sensor_msgs::msg::LaserScan| {
+            move |state: &mut TelemetryState, msg: sensor_msgs::msg::LaserScan| {
                 rclrs::log_debug!(
                     state.node.logger(),
                     "Received /scan message with {} ranges",
                     msg.ranges.len()
+                );
+
+                queue_metrics(
+                    state,
+                    "scan",
+                    extract_scan_metrics(&msg, scan_topic_name.as_str()),
                 );
             },
         )?;
@@ -159,17 +156,24 @@ impl RobotTelemetryServerNode {
             SubscriptionOptions::new(twist_config.topic.as_ref());
         twist_subscription_opts.qos =
             configure_qos(&node, "twist", twist_subscription_opts.qos, &twist_config);
+        let twist_topic_name = twist_config.topic.to_string();
 
         let twist_subscription: Arc<
             SubscriptionState<geometry_msgs::msg::Twist, Arc<WorkerState<TelemetryState>>>,
         > = worker.create_subscription(
             twist_subscription_opts,
-            |state: &mut TelemetryState, msg: geometry_msgs::msg::Twist| {
+            move |state: &mut TelemetryState, msg: geometry_msgs::msg::Twist| {
                 rclrs::log_debug!(
                     state.node.logger(),
                     "Received /cmd_vel message linear.x={:.3}, angular.z={:.3}",
                     msg.linear.x,
                     msg.angular.z
+                );
+
+                queue_metrics(
+                    state,
+                    "twist",
+                    extract_twist_metrics(&msg, twist_topic_name.as_str(), current_timestamp_ns()),
                 );
             },
         )?;
@@ -184,17 +188,24 @@ impl RobotTelemetryServerNode {
             battery_state_subscription_opts.qos,
             &battery_config,
         );
+        let battery_topic_name = battery_config.topic.to_string();
 
         let battery_state_subscription: Arc<
             SubscriptionState<sensor_msgs::msg::BatteryState, Arc<WorkerState<TelemetryState>>>,
         > = worker.create_subscription(
             battery_state_subscription_opts,
-            |state: &mut TelemetryState, msg: sensor_msgs::msg::BatteryState| {
+            move |state: &mut TelemetryState, msg: sensor_msgs::msg::BatteryState| {
                 rclrs::log_debug!(
                     state.node.logger(),
                     "Received /battery_state message voltage={:.3}, current={:.3}",
                     msg.voltage,
                     msg.current
+                );
+
+                queue_metrics(
+                    state,
+                    "battery",
+                    extract_battery_metrics(&msg, battery_topic_name.as_str()),
                 );
             },
         )?;
@@ -204,16 +215,23 @@ impl RobotTelemetryServerNode {
         let mut tf_subscription_opts: SubscriptionOptions<'_> =
             SubscriptionOptions::new(tf_config.topic.as_ref());
         tf_subscription_opts.qos = configure_qos(&node, "tf", tf_subscription_opts.qos, &tf_config);
+        let tf_topic_name = tf_config.topic.to_string();
 
         let tf_subscription: Arc<
             SubscriptionState<tf2_msgs::msg::TFMessage, Arc<WorkerState<TelemetryState>>>,
         > = worker.create_subscription(
             tf_subscription_opts,
-            |state: &mut TelemetryState, msg: tf2_msgs::msg::TFMessage| {
+            move |state: &mut TelemetryState, msg: tf2_msgs::msg::TFMessage| {
                 rclrs::log_debug!(
                     state.node.logger(),
                     "Received /tf message with {} transforms",
                     msg.transforms.len()
+                );
+
+                queue_metrics(
+                    state,
+                    "tf",
+                    extract_tf_metrics(&msg, tf_topic_name.as_str()),
                 );
             },
         )?;
@@ -242,18 +260,13 @@ impl RobotTelemetryServerNode {
                     msg.msg
                 );
 
-                let timestamp_ns =
-                    i64::from(msg.stamp.sec) * 1_000_000_000 + i64::from(msg.stamp.nanosec);
-                let event = EventLog {
-                    timestamp_ns,
-                    source_topic: rosout_topic_name.clone(),
-                    logger_name: msg.name.clone(),
-                    severity: i64::from(msg.level),
-                    message: msg.msg.clone(),
-                    file: optional_string(msg.file.clone()),
-                    function_name: optional_string(msg.function.clone()),
-                    line: Some(i64::from(msg.line)),
-                };
+                queue_metrics(
+                    state,
+                    "rosout",
+                    extract_rosout_metrics(&msg, rosout_topic_name.as_str()),
+                );
+
+                let event = extract_rosout_event(&msg, rosout_topic_name.as_str());
 
                 if let Err(error) = state.db_writer.write_event(event) {
                     rclrs::log_warn!(
@@ -280,6 +293,15 @@ impl RobotTelemetryServerNode {
     }
 }
 
-fn optional_string(value: String) -> Option<String> {
-    if value.is_empty() { None } else { Some(value) }
+fn queue_metrics(state: &TelemetryState, label: &str, samples: Vec<MetricSample>) {
+    for sample in samples {
+        if let Err(error) = state.db_writer.write_metric(sample) {
+            rclrs::log_warn!(
+                state.node.logger(),
+                "Failed to queue {} metric for sqlite writer: {}",
+                label,
+                error
+            );
+        }
+    }
 }
